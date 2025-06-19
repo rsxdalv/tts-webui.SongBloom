@@ -70,46 +70,5 @@ class AudioTokenizerConditioner(WaveformConditioner):
         audio_latents = audio_latents * mask[..., None]
         
         return audio_latents, mask
-
-
-class PitchConditioner(WaveformConditioner):
-    def __init__(self, vocab_size, dim, output_dim, encode_layers=0, add_eos=True):
-        super().__init__(dim, output_dim)
-        self.sep_id = vocab_size
-        self.pitch2emb = nn.Embedding(vocab_size+1, dim, padding_idx=self.sep_id) # sep
-        self.add_eos = add_eos
-        from ...transformer import ContinuousTransformer
-        if encode_layers > 0:
-            self.pitch_encoder = ContinuousTransformer(
-                dim=dim,
-                depth=encode_layers,
-                dim_heads = 64,
-                causal=False,
-                abs_pos_emb_max_length=10000,
-            )
-        else:
-            self.pitch_encoder = nn.Identity()
-        
-        
-    def forward(self, x: WavCondition):
-
-        pitch_seq, lengths, *_ = x
-        B = pitch_seq.shape[0]
-        pitch_seq = pitch_seq.reshape(B, -1).long()
-        for b, bl in enumerate(lengths):
-            pitch_seq[b,bl:] = self.sep_id
-        if self.add_eos:
-            pitch_seq = F.pad(pitch_seq, (0,1), value=self.sep_id)
-            lengths += 1
-        pitch_emb = self.pitch2emb(pitch_seq)
-        mask = length_to_mask(lengths, max_len=pitch_emb.shape[1]).bool()  # type: ignore
-        # pitch_enc = self.pitch_encoder(pitch_emb)
-        if isinstance(self.pitch_encoder, nn.Identity):
-            pitch_enc = self.pitch_encoder(pitch_emb)
-        else:
-            pitch_enc = self.pitch_encoder(pitch_emb, mask=mask)
-        pitch_enc = self.output_proj(pitch_enc)
-        return pitch_enc, mask
-        
-        
+     
 

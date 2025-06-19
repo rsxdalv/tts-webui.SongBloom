@@ -3,8 +3,7 @@ from dataclasses import dataclass
 from functools import partial
 import logging
 import math
-import typing as tp
-import einops
+
 import torch
 from torch import nn
 

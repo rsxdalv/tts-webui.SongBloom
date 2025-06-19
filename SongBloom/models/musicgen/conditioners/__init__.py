@@ -8,13 +8,10 @@ import omegaconf
 from .base import *
 from .text import *
 from .wav import *
-from .joint import *
 
 KLASS = {
-    'mulan': MuLANConditioner,
     'phoneme_tokenizer': PhonemeTokenizerConditioner,
     'audio_tokenizer_wrapper': AudioTokenizerConditioner,
-    "pitch": PitchConditioner,
 }
 
 def get_condition_fuser(fuser_cfgs) -> ConditionFuser:
