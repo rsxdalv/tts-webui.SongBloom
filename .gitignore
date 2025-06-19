@@ -1,1 +1,4 @@
-*/__pycache__
+__pycache__
+output
+cache
+third_party

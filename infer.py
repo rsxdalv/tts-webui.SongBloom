@@ -1,92 +1,85 @@
-import glob
-import time
-import torch
-import re
-import torch.nn.functional as F
-
-from itertools import chain
-import torchaudio
-from tqdm import tqdm
-import json
-import typing as tp
-import numpy as np
-import time
-
-from allprompt1129.dataset_2min import TestData
-
 import os, sys
+import torchaudio
+import argparse
+import json
+from omegaconf import MISSING, OmegaConf,DictConfig
+from huggingface_hub import hf_hub_download
 
 os.environ['DISABLE_FLASH_ATTN'] = "1"
-from SongBloom.registry import load_config
-from SongBloom.datasets.lyric_common import key2processor, symbols, LABELS
-
 from SongBloom.models.songbloom.songbloom_pl import SongBloom_Sampler
 
+
+def hf_download(repo_id="CypressYang/SongBloom", model_name="songbloom_full_150s", local_dir="./cache", **kwargs):
+    cfg_path = hf_hub_download(
+        repo_id=repo_id, filename=f"{model_name}.yaml", local_dir=local_dir, **kwargs)
+    ckpt_path = hf_hub_download(
+        repo_id=repo_id, filename=f"{model_name}.pt", local_dir=local_dir, **kwargs)
+    
+    vae_cfg_path = hf_hub_download(
+        repo_id=repo_id, filename="stable_audio_1920_vae.json", local_dir=local_dir, **kwargs)
+    vae_ckpt_path = hf_hub_download(
+        repo_id=repo_id, filename="autoencoder_music_dsp1920.ckpt", local_dir=local_dir, **kwargs)
+    
+    g2p_path = hf_hub_download(
+        repo_id=repo_id, filename="vocab_g2p.yaml", local_dir=local_dir, **kwargs)
+    
+
+    
+    
+
+
+def load_config(cfg_file, parent_dir="./") -> DictConfig:
+    OmegaConf.register_new_resolver("eval", lambda x: eval(x))
+    OmegaConf.register_new_resolver("concat", lambda *x: [xxx for xx in x for xxx in xx])
+    OmegaConf.register_new_resolver("get_fname", lambda x: os.path.splitext(os.path.basename(x))[0])
+    OmegaConf.register_new_resolver("load_yaml", lambda x: OmegaConf.load(x))
+    OmegaConf.register_new_resolver("dynamic_path", lambda x: x.replace("???", parent_dir))
+    # cmd_cfg = OmegaConf.from_cli()
+    
+    file_cfg = OmegaConf.load(open(cfg_file, 'r')) if cfg_file is not None \
+                else OmegaConf.create()
+    
+
+    return file_cfg
 
 
 
 def main():
-    cfg = load_config()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--repo-id", type=str, default="CypressYang/SongBloom")
+    parser.add_argument("--model-name", type=str, default="songbloom_full_150s")
+    parser.add_argument("--local-dir", type=str, default="./cache")
+    parser.add_argument("--input-jsonl", type=str, required=True)
+    parser.add_argument("--output-dir", type=str, default="./output")
+    parser.add_argument("--n-samples", type=int, default=2)
+    
+    args = parser.parse_args()
+
+    hf_download(args.repo_id, args.model_name, args.local_dir)
+    cfg = load_config(f"{args.local_dir}/{args.model_name}.yaml", parent_dir=args.local_dir)
   
-    cfg.max_dur = 150
     model = SongBloom_Sampler.build_from_trainer(cfg, strict=True)
+    model.set_generation_params(**cfg.inference)
+          
+    os.makedirs(args.output_dir, exist_ok=True)
     
-    N_sample = 2
-    ckpt_name = [i for i in cfg.pretrained_path.split("/") if i.startswith("step=")][0]
-    save_dir = f"output_150s/{os.path.splitext(os.path.basename(sys.argv[1]))[0]}/{ckpt_name}/cfg{cfg.inference.cfg_coef}_{cfg.inference.dit_cfg_type}_step{cfg.inference.steps}" #+ (f"_steps{cfg.inference.steps}" if cfg.inference.get("steps", "") != "" else "")
-                
-    os.makedirs(save_dir, exist_ok=True)
+    input_lines = open(args.input_jsonl, 'r').readlines()
+    input_lines = [json.loads(l.strip()) for l in input_lines]
     
-    # model.eval()
-    model.set_generation_params(use_sampling=True, **cfg.inference)  
-    # import pdb; pdb.set_trace()
-
-    lyric_processor = key2processor.get(cfg.train_dataset.lyric_processor) if cfg.train_dataset.lyric_processor is not None else lambda x: x
-    lyric_processor_key = cfg.train_dataset.lyric_processor
-    def _process_lyric(input_lyric):
-        if lyric_processor_key == 'pinyin':
-            processed_lyric = lyric_processor(input_lyric)
-        else:
-            processed_lyric = []
-            check_lyric = input_lyric.split(" ")
-            for ii in range(len(check_lyric)):
-                if check_lyric[ii] not in symbols and check_lyric[ii] not in LABELS.keys() and len(check_lyric[ii]) > 0:
-                    new = lyric_processor(check_lyric[ii])
-                    check_lyric[ii] = new
-            processed_lyric = " ".join(check_lyric)
-        
-        print(input_lyric)
-        print(processed_lyric)
-        return processed_lyric
-        
-    # save_lrc = open("out_lrc.txt", 'w')
-    time_consuming = 0.
-    gen_length = 0.
-    
-    for idx, test_sample in enumerate(TestData()):
+    for test_sample in input_lines:
         # print(test_sample)
-        genre, lyrics, prompt_wav = test_sample 
-        # genre = genre[0]
-        generate_inp = {
-            "lyrics": [_process_lyric(lyrics[0])],
-            'prompt_wav': [prompt_wav[0].mean(dim=0, keepdim=True)],
-        }
-        print(generate_inp)
-        print(generate_inp['prompt_wav'][0].shape)
+        idx, lyrics, prompt_wav = test_sample["idx"], test_sample["lyrics"], test_sample["prompt_wav"]
+
+        prompt_wav, sr = torchaudio.load(prompt_wav)
+        if sr != model.sample_rate:
+            prompt_wav = torchaudio.functional.resample(prompt_wav, sr, model.sample_rate)
+        prompt_wav = prompt_wav.mean(dim=0, keepdim=True)
         # breakpoint()
-        for i in range(N_sample):
+        for i in range(args.n_samples):
+            wav = model.generate(lyrics, prompt_wav)
+            torchaudio.save(f'{args.output_dir}/{idx}_s{i}.flac', wav[0].cpu(), model.sample_rate)
 
-            if os.path.exists(f'{save_dir}/{genre}_s{i}.flac'):
-                continue
-            st = time.time()
-            wav = model.generate(**generate_inp)
-            time_consuming += time.time() - st
-            gen_length += wav.shape[-1] / 48000
-            os.makedirs(os.path.dirname(f'{save_dir}/{genre}_s{i}.flac'), exist_ok=True)
-            torchaudio.save(f'{save_dir}/{genre}_s{i}.flac', wav[0].cpu(), model.sample_rate)
-            print(f'{save_dir}/{genre}_s{i}.flac')
 
-    print("RTF:\t", time_consuming / (gen_length + 1e-9))
 if __name__ == "__main__":
     
     main()

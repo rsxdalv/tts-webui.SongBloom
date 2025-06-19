@@ -1,4 +1,3 @@
+source set_env.sh
 
-bash set_env_chongqing.sh
-
-python3 infer.py cfg_file=conf/songbloom_large_150s_semantic_mvsa_block16_cq_infer.yaml
+python3 infer.py --input-jsonl example/test.jsonl

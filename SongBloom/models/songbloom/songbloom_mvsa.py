@@ -110,10 +110,8 @@ class MVSA_DiTAR(StreamingModule):
         else:
             raise NotImplementedError(f"Illegal backend: {self.backend}!")
         
-        if lm_layers <= 24:
-            self.skeleton_classifier = nn.Linear(dim, self.num_pitch) # TODO 改成 MLP ，可能有梯度上的问题
-        else:
-            self.skeleton_classifier =  nn.Sequential(nn.Linear(dim, dim, bias=False), 
+
+        self.skeleton_classifier =  nn.Sequential(nn.Linear(dim, dim, bias=False), 
                                                     nn.SiLU(),
                                                     nn.Linear(dim, self.num_pitch),)
         
@@ -133,7 +131,7 @@ class MVSA_DiTAR(StreamingModule):
         self.project_out = nn.Linear(dim, latent_dim) if latent_dim != dim else nn.Identity()
         
         self.timestep_features_dim = timestep_features_dim
-        self.time_cond_type = time_cond_type # "adaLN"
+        self.time_cond_type = time_cond_type 
         assert self.time_cond_type in ['adaLN', "prepend"]
         self.timestep_features = FourierFeatures(1, timestep_features_dim)
         self.to_timestep_embed = nn.Sequential(
@@ -340,7 +338,6 @@ class MVSA_DiTAR(StreamingModule):
             "x": input_,
             "global_cond": timestep_embed if self.time_cond_type == "adaLN" else None}
         
-
         output = self.nar_dit(**transformer_input)
 
         # remove the prefix from the model outputs
@@ -413,7 +410,7 @@ class MVSA_DiTAR(StreamingModule):
                     tmp = min(q_count.shape[-1], self.num_pitch - 1) 
                     next_pitch_logit[b, -1, :tmp] /= (1.1 ** q_count[:tmp])
                     
-            # TODO sample k
+            # sample k
             if use_sampling and temp > 0.0:
                 probs = torch.softmax(next_pitch_logit  / temp, dim=-1)
                 if top_p > 0.0:
@@ -499,7 +496,7 @@ class MVSA_DiTAR(StreamingModule):
                  steps=50,
                  dit_cfg_type: str = 'h',
                  max_frames: int = 1500, # 60 * 25
-                 use_sampling: bool = False,
+                 use_sampling: bool = True,
                  temp: float = 1.0,
                  diff_temp: float = 1.0,
                  top_k: int = 0,

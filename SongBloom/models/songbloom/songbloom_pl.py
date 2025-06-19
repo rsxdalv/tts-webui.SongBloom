@@ -1,13 +1,6 @@
-"""
-Main model for using CodecLM. This will combine all the required components
-and provide easy access to the generation API.
-"""
 
 from functools import partial
 import typing as tp
-import warnings
-import sys
-import time
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
@@ -23,7 +16,7 @@ import os, sys
 from ..musicgen.conditioners import WavCondition, JointEmbedCondition, ConditioningAttributes
 from ..vae_frontend import StableVAE
 from .songbloom_mvsa import MVSA_DiTAR
-
+from ...g2p.lyric_common import key2processor, symbols, LABELS
 
 
 os.environ['TOKENIZERS_PARALLELISM'] = "false"
@@ -65,27 +58,20 @@ class SongBloom_PL(pl.LightningModule):
 
 ####################################
 
-class SongBloom_Sampler:
-    """CodecLM main model with convenient generation API.
-
-    Args:
-        name (str): name of the model.
-        compression_model (CompressionModel): Compression model
-            used to map audio to invertible discrete representations.
-        lm (LMModel): Language model over discrete representations.
-        max_duration (float, optional): maximum duration the model can produce,
-            otherwise, inferred from the training params.
-    """
+class SongBloom_Sampler:    
     
-    
-    def __init__(self, compression_model: StableVAE, diffusion: MVSA_DiTAR,
-                 max_duration: tp.Optional[float] = None):
+    def __init__(self, compression_model: StableVAE, diffusion: MVSA_DiTAR, lyric_processor_key,
+                 max_duration: float, prompt_duration: tp.Optional[float] = None):
         self.compression_model = compression_model
         self.diffusion = diffusion
+        self.lyric_processor_key = lyric_processor_key
+        self.lyric_processor = key2processor.get(lyric_processor_key) if lyric_processor_key is not None else lambda x: x
         # import pdb; pdb.set_trace()
 
         assert max_duration is not None
         self.max_duration: float = max_duration
+        self.prompt_duration = prompt_duration
+        
         
         self.device = next(iter(diffusion.parameters())).device
         self.generation_params: dict = {}
@@ -97,16 +83,22 @@ class SongBloom_Sampler:
     @classmethod
     def build_from_trainer(cls, cfg, strict=True):
         model_light = SongBloom_PL(cfg)
-
         incompatible = model_light.load_state_dict(torch.load(cfg.pretrained_path, map_location='cpu'), strict=strict)
+        
+        lyric_processor_key = cfg.train_dataset.lyric_processor
+    
         print(incompatible)
         
         model_light = model_light.eval().cuda()    
         model = cls(
             compression_model = model_light.vae,
             diffusion = model_light.model,
+            lyric_processor_key = lyric_processor_key,
             max_duration = cfg.max_dur,
+            prompt_duration = cfg.sr * cfg.train_dataset.prompt_len
+            
         )
+        model.set_generation_params(**cfg.inference)
         return model
         
     @property
@@ -121,41 +113,44 @@ class SongBloom_Sampler:
 
 
     def set_generation_params(self, **kwargs):
-        """Set the generation parameters for CodecLM.
-
-        Args:
-            use_sampling (bool, optional): Use sampling if True, else do argmax decoding. Defaults to True.
-            top_k (int, optional): top_k used for sampling. Defaults to 250.
-            top_p (float, optional): top_p used for sampling, when set to 0 top_k is used. Defaults to 0.0.
-            temperature (float, optional): Softmax temperature parameter. Defaults to 1.0.
-            duration (float, optional): Duration of the generated waveform. Defaults to 30.0.
-            cfg_coef (float, optional): Coefficient used for classifier free guidance. Defaults to 3.0.
-            extend_stride: when doing extended generation (i.e. more than 30 seconds), by how much
-                should we extend the audio each time. Larger values will mean less context is
-                preserved, and shorter value will require extra computations.
-        """
+        """Set the generation parameters."""
         self.generation_params.update(kwargs)
 
     # Mulan Inference
     @torch.no_grad()
-    def generate(self, prompt: torch.Tensor = None,
-                             **conditions, ) -> tp.Union[torch.Tensor, tp.Tuple[torch.Tensor, torch.Tensor]]:
+    def generate(self, lyrics, prompt_wav) -> tp.Union[torch.Tensor, tp.Tuple[torch.Tensor, torch.Tensor]]:
         """ Generate samples conditioned on text and melody.
         """
         # breakpoint()
-        if prompt is not None and prompt.ndim == 2:
-            prompt = prompt.unsqueeze(dim=1)
-        attributes, prompt_tokens = self._prepare_tokens_and_attributes(conditions=conditions, 
-                                                                        prompt=prompt, prompt_tokens=None)
-        if prompt_tokens is not None:
-            raise NotImplementedError("No support to prompt wav now")
+        assert prompt_wav.ndim == 2
+        if self.prompt_duration is not None:
+            prompt_wav = prompt_wav[..., :self.prompt_duration]
+            
+        attributes, _ = self._prepare_tokens_and_attributes(conditions={"lyrics": [self._process_lyric(lyrics)], "prompt_wav": [prompt_wav]}, 
+                                                                        prompt=None, prompt_tokens=None)
+
         # breakpoint()
         print(self.generation_params)
         latent_seq, token_seq = self.diffusion.generate(None, attributes, **self.generation_params)
-        print(token_seq)
+        # print(token_seq)
         audio_recon = self.compression_model.decode(latent_seq).float()
         
         return audio_recon
+    
+
+    def _process_lyric(self, input_lyric):
+        if self.lyric_processor_key == 'pinyin':
+            processed_lyric = self.lyric_processor(input_lyric)
+        else:
+            processed_lyric = []
+            check_lyric = input_lyric.split(" ")
+            for ii in range(len(check_lyric)):
+                if check_lyric[ii] not in symbols and check_lyric[ii] not in LABELS.keys() and len(check_lyric[ii]) > 0:
+                    new = self.lyric_processor(check_lyric[ii])
+                    check_lyric[ii] = new
+            processed_lyric = " ".join(check_lyric)
+        
+        return processed_lyric
     
     @torch.no_grad()
     def _prepare_tokens_and_attributes(
