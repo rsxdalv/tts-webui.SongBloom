@@ -32,7 +32,7 @@ def get_backend(name, dim, num_heads, num_layers, hidden_scale, init_std=0.02, r
             hidden_act="silu",
             initializer_range=init_std,
             rope_theta=rope_theta,
-            _attn_implementation="flash_attention_2" if _enable_flash_attention else "eager",
+            _attn_implementation="flash_attention_2" if _enable_flash_attention else "sdpa",
         )
         model = LlamaModel(model_cfg)
         
@@ -43,7 +43,7 @@ def get_backend(name, dim, num_heads, num_layers, hidden_scale, init_std=0.02, r
             max_position_embeddings=4096,
             dropout=0., 
             use_cache=False,
-            _attn_implementation="flash_attention_2" if _enable_flash_attention else "eager",
+            _attn_implementation="flash_attention_2" if _enable_flash_attention else "sdpa",
             activation_function='gelu',
             # for BartEncoder
             encoder_layers=num_layers, 
@@ -60,7 +60,7 @@ def get_backend(name, dim, num_heads, num_layers, hidden_scale, init_std=0.02, r
             max_position_embeddings=4096,
             dropout=0., 
             use_cache=False,
-            _attn_implementation="flash_attention_2" if _enable_flash_attention else "eager",
+            _attn_implementation="flash_attention_2" if _enable_flash_attention else "sdpa",
             activation_function='gelu',
             # for BartDecoder
             decoder_layers=num_layers,
