@@ -131,9 +131,17 @@ class SongBloom_Sampler:
 
         # breakpoint()
         print(self.generation_params)
+        self.diffusion.to(self.device)
         latent_seq, token_seq = self.diffusion.generate(None, attributes, **self.generation_params)
         # print(token_seq)
+        self.diffusion.cpu()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        self.compression_model.to(self.device)
         audio_recon = self.compression_model.decode(latent_seq).float()
+        self.compression_model.cpu()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         
         return audio_recon
     

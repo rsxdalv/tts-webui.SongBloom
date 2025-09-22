@@ -8,7 +8,7 @@ setuptools.setup(
     # Keep the original namespaced distribution name used by this project
     name="tts-webui.songbloom",
     packages=setuptools.find_namespace_packages(),
-    version="0.0.2",
+    version="0.1.0",
     author="Your Name",
     description="SongBloom package for tts-webui",
     long_description=README,
