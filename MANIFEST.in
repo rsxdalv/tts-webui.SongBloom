@@ -1,0 +1,3 @@
+recursive-include SongBloom *.txt *.yaml *.yml *.json
+recursive-include SongBloom *.md
+include README.md
