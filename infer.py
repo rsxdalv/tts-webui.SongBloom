@@ -52,6 +52,24 @@ def load_config(cfg_file, parent_dir="./") -> DictConfig:
 
     return file_cfg
 
+def read_jsonl_lines(path):
+    """
+    Read a JSONL file trying several encodings (utf-8, utf-8-sig, cp1252, latin-1).
+    Falls back to decoding bytes with utf-8 and errors='replace' if necessary.
+    Returns a list of lines (str).
+    """
+    encodings = ["utf-8", "utf-8-sig", "cp1252", "latin-1"]
+    for enc in encodings:
+        try:
+            with open(path, "r", encoding=enc) as f:
+                return f.readlines()
+        except UnicodeDecodeError:
+            continue
+    # Final fallback: decode bytes with replacement to avoid decode errors
+    with open(path, "rb") as f:
+        data = f.read().decode("utf-8", errors="replace")
+    return data.splitlines()
+
 
 
 def main():
@@ -76,8 +94,18 @@ def main():
           
     os.makedirs(args.output_dir, exist_ok=True)
     
-    input_lines = open(args.input_jsonl, 'r').readlines()
-    input_lines = [json.loads(l.strip()) for l in input_lines]
+    raw_lines = read_jsonl_lines(args.input_jsonl)
+    input_lines = []
+    for l in raw_lines:
+        s = l.strip()
+        if not s:
+            continue
+        try:
+            input_lines.append(json.loads(s))
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                f"Failed to parse JSON line from {args.input_jsonl!r}. Decoded line: {s!r}. JSON error: {e}"
+            )
     
     for test_sample in input_lines:
         # print(test_sample)
